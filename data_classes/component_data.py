@@ -22,23 +22,41 @@ from enums.switch_condition import SwitchCondition
 # -----------------------------------------------------------------------------
 
 # Ideal component data
-@dataclass
+@dataclass(slots=True)
 class IdealComponentData:
     ideal_voltage: float = 0.0
     ideal_current: float = 0.0
     int_resistance: float = 0.0
 
-@dataclass
+# Historical component data
+@dataclass(slots=True)
+class DiscretizationData:
+    lpv1_voltage: float = 0.0
+    lpv2_voltage: float = 0.0
+    lpv1_current: float = 0.0
+    lpv2_current: float = 0.0
+
+@dataclass(slots=True)
 class ComponentData:
+    # Network information
     name: str
     node1: str
     node2: str
-    current: float
-    voltage: float
-    resistance: float
-    mode: CalculationMode
-    scond: SwitchCondition
-    ctype: ComponentType
     
-    # Ideal parameters
+    # Physical Properties
+    current: float = 0.0
+    voltage: float = 0.0
+    resistance: float = 0.0
+    capacitance: float = 0.0
+    inductance: float = 0.0
+    
+    # Component information
+    mode: CalculationMode = CalculationMode.VOLTAGE
+    scond: SwitchCondition = SwitchCondition.CLOSED
+    ctype: ComponentType = ComponentType.RESISTOR
+    
+    # Ideal parameters (voltage sources)
     ideal_params: Optional[IdealComponentData] = None
+    
+    # Discretization data (stores LPVs for derivatives)
+    discrete_data: Optional[DiscretizationData] = None

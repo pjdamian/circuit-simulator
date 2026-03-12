@@ -26,6 +26,11 @@ from examples.parallel_network import build_parallel_network
 
 class TestParallelNetworkPhysics(unittest.TestCase):
     def test_parallel_currents_and_voltages(self):
+        """
+        TEST 1: PASSES, PARALLEL RESISTORS, CHECKS CURRENTS AND VOLTAGES
+
+        """
+        
         # build, solve network
         parallel_net = build_parallel_network()
         parallel_net.solve()

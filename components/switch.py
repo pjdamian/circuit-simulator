@@ -28,7 +28,7 @@ class Switch(CircuitComponent):
         # Enforce type setting
         self.component.ctype = ComponentType.SWITCH
         
-    def update(self, time=None):
+    def update(self):
         
         # Update switch status
         self.resistance()
@@ -42,7 +42,8 @@ class Switch(CircuitComponent):
         else:    
             raise ValueError('Error: Specify calculation mode for Switch '+
                              self.component.name)
-    def stamp(self, A, b, n1, n2, voltage_source_index=None, i_guess=None):
+    def stamp(self, A, b, n1, n2, voltage_source_index=None, default_dt=None,
+              discretization=None):
         # Used for matrix formulation in network class
         
         # # Get component node indices

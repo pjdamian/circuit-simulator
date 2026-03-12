@@ -46,12 +46,20 @@ class SwitchTests(unittest.TestCase):
         return ComponentData(**default_data)
     
     def test_voltage_closed_switch(self):
+        """
+        TEST 1: CHECKS VOLTAGE CALCULATION, SWITCH CLOSED, PASSES
+        
+        """
         test_data = self.make_test_data()
         switch = Switch(test_data)
         switch.update()
         self.assertAlmostEqual(switch.component.voltage, 1.0e-10)
         
     def test_voltage_open_switch(self):
+        """
+        TEST 2: CHECKS VOLTAGE CALCULATION, SWITCH OPEN, PASSES
+        
+        """
         test_data = self.make_test_data(
             current=0.001,
             mode=CalculationMode.VOLTAGE,
@@ -61,6 +69,10 @@ class SwitchTests(unittest.TestCase):
         self.assertAlmostEqual(switch.component.voltage, 1.0e7)
         
     def test_current_closed_switch(self):
+        """
+        TEST 3: CHECKS CURRENT CALCULATION, SWITCH CLOSED, PASSES
+        
+        """
         test_data = self.make_test_data(
             voltage=1.0,
             mode=CalculationMode.CURRENT)
@@ -69,6 +81,10 @@ class SwitchTests(unittest.TestCase):
         self.assertAlmostEqual(switch.component.current, 1.0e10)
         
     def test_current_open_switch(self):
+        """
+        TEST 4: CHECKS CURRENT CALCULATION, SWITCH OPEN, PASSES
+
+        """
         test_data = self.make_test_data(
             voltage=1.0,
             mode=CalculationMode.CURRENT,
@@ -78,12 +94,20 @@ class SwitchTests(unittest.TestCase):
         self.assertAlmostEqual(switch.component.current, 1.0e-10)
     
     def test_invalid_mode(self):
+        """
+        TEST 5: CHECKS INVALID MODE, CODE SHOULD ERROR, PASSES
+
+        """
         test_data = self.make_test_data(mode=None)
         switch = Switch(test_data)
         with self.assertRaises(ValueError):
             switch.update()
             
     def test_invalid_switch_condition(self):
+        """
+        TEST 6: CHECKS INVALID SWITCH STATE, CODE SHOULD ERROR
+
+        """
         test_data = self.make_test_data(
             scond=None,
             mode=CalculationMode.VOLTAGE)

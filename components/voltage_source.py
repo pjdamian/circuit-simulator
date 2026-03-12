@@ -27,7 +27,7 @@ class VoltageSource(CircuitComponent):
         # Enforce type setting
         self.component.ctype = ComponentType.VOLTAGE_SOURCE
         
-    def update(self, time=None):
+    def update(self):
         
         if self.component.mode == CalculationMode.VOLTAGE:
             self.voltage()
@@ -42,7 +42,8 @@ class VoltageSource(CircuitComponent):
             raise ValueError('Error: Specify calculation mode for Voltage '+
                              self.component.name)
     
-    def stamp(self, A, b, n1, n2, voltage_source_index, i_guess=None):
+    def stamp(self, A, b, n1, n2, voltage_source_index=None, default_dt=None,
+              discretization=None):
         # Used for matrix formulation in network class
         
         # Check for ideal parameters        

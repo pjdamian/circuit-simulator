@@ -15,27 +15,48 @@ import numpy as np
 
 # Custom modules
 from enums.component_type import ComponentType
+from enums.discretization_type import DiscretizationType
 from data_classes.node_data import NodeData
 from data_classes.branch_data import BranchData
+from data_classes.simulation_data import SimulationData
+from config_classes.numeric_checks import MathChecks
+from networks.input_driver import InputDriver
 
 # -----------------------------------------------------------------------------
 # Define class
 # -----------------------------------------------------------------------------
 
 class Network:
-    def __init__(self, node_reporting=False, branch_reporting=False):
-        self.graph = nx.Graph()
+    def __init__(self, 
+                 node_reporting=False, 
+                 branch_reporting=False,
+                 numerics: MathChecks | None = None,
+                 discretization=DiscretizationType.BACKWARD_EULER,
+                 verbose=False):
+        
+        # Setting arguments
+        self.node_reporting = node_reporting
+        self.branch_reporting = branch_reporting
+        self.numerics = numerics or MathChecks()
+        self.discretization = discretization
+        self.verbose = verbose
+        
+        # Initializing attributes        
+        self.graph = nx.MultiGraph() # nx.Graph() # Parallel Edges 
         self.mode = None
         self.ground_node = None
         self.node_indices = {} # name -> index node mapping
         self.node_list = [] # ordered list of nodes
         self.node_voltages = {}
-        
-        self.node_reporting = node_reporting
+        self.v_source_list = []
+        self.num_nodes = 0
+        self.num_v_sources = 0
         self.node_report = None
-        
-        self.branch_reporting = branch_reporting
         self.branch_report = None
+        
+        # Discretization check - allows swapping between discretization schemes
+        # first dt vs rest or after special spikes in data
+        self.default_dt = True
         
     def add_node(self, name, pos=None):
         self.graph.add_node(name)
@@ -43,8 +64,337 @@ class Network:
             self.graph.nodes[name]['pos'] = pos
             
     def add_component(self, n1, n2, component):
-        self.graph.add_edge(n1, n2, component=component)
         
+        # Overwrite node names with provided nodes
+        component.component.node1 = n1
+        component.component.node2 = n2
+        
+        # Add component as an edge
+        self.graph.add_edge(n1, n2, key=component.component.name, 
+                            component=component)
+        
+    def solve(self, 
+              time: np.ndarray | None = None,
+              input_driver: InputDriver | None = None):
+        
+        # Prune isolated nodes, Build node list
+        self._local_print('\nPruning isolated nodes')
+        self._prune_isolated_nodes()
+        
+        # Build lists, lookups, and dictionaries
+        self._local_print('\nBuilding lists, lookups, and dictionaries')
+        self._build_node_list()        
+        self._build_voltage_list()
+        self._build_branch_list()
+        self._build_component_lookup()
+        
+        # Initialize output storage, sim_data
+        self._get_simulation_length(time)
+        sim_data = self._init_storage(time)
+        
+        # Evaluate single timestep
+        if self.num_steps == 1:
+            self._timestep(dt=None)
+            self._write_step(sim_data, 0)
+            
+        else:
+
+            # Error for missing input_driver 
+            if input_driver is None:
+                raise ValueError("Transient behavior needs input_driver object")
+
+            # calculate dts, initialize default dt
+            dt_vec = np.diff(time)
+            
+            # vectorized dt check
+            self._guard_dt_min_vec(dt_vec)
+            
+            # Loop over all dts - first time step will be the network solved 
+            # for the given component conditions
+            for k, dt in enumerate(dt_vec, start=0):
+                
+                # Get new time stamp
+                t_new = float(sim_data.time[k])
+                
+                # Apply inputs
+                input_driver.apply(self, t=t_new, k=k)
+                
+                # Evaluate and store timestep
+                self._timestep(dt=dt)
+                self._write_step(sim_data, k)
+                
+                # Update default_dt
+                if self.default_dt:
+                    self.default_dt = False
+                
+        # Store sim_data on object
+        self.sim_data = sim_data
+            
+    def _build_branch_list(self):
+        
+        self.branch_list = [(n1, n2, d["component"]) for n1, n2, d in 
+                            self.graph.edges(data=True)]
+        
+    def _build_component_lookup(self):
+        
+        self.components_by_name = {}
+        
+        for _, _, data in self.graph.edges(data=True):
+            
+            c_obj = data["component"]
+            name = c_obj.component.name
+            
+            if ((name in self.components_by_name) and 
+                ((c_obj.component.ctype is ComponentType.VOLTAGE_SOURCE) or 
+                (c_obj.component.ctype is ComponentType.CURRENT_SOURCE))):
+                raise ValueError(f"Duplicate component name: {name}")
+                
+            self.components_by_name[name] = c_obj
+        
+    def _build_node_list(self):
+        
+        self._set_ground()
+        
+        # Clear node indices and lists
+        self.node_indices = {}
+        self.node_list = []
+        
+        # Set index
+        idx=0
+        
+        for node in self.graph.nodes:
+            self.node_indices[node] = idx
+            self.node_list.append(node)
+            idx += 1
+            
+        self.num_nodes = len(self.node_indices)
+
+    def _build_voltage_list(self):
+        
+        v_source_list = []
+        for _,_, data in self.graph.edges(data=True):
+            
+            c = data['component'].component
+            
+            n1 = c.node1
+            n2 = c.node2
+            
+            if c.ctype == ComponentType.VOLTAGE_SOURCE:
+                v_source_list.append((n1, n2, data['component']))
+                
+        self.v_source_list = v_source_list
+        self.num_v_sources = len(v_source_list)
+
+    def _check_matrix(self, A):
+        
+        # Get rank of matrix
+        rank = np.linalg.matrix_rank(A)
+        
+        if rank < A.shape[0]:
+            
+            # Node-voltage unknowns
+            n = len(self.node_indices)
+            
+            # Number of voltage sources
+            m = sum(1 for _,_,d in self.graph.edges(data=True)
+                    if (d['component'].component.ctype == 
+                        ComponentType.VOLTAGE_SOURCE))
+            
+            # row information
+            row_norms = np.linalg.norm(A, axis=1)
+            self._local_print("row norms:", [f"{i}:{row_norms[i]:.2e}" for i in 
+                                 range(A.shape[0])])
+            
+            # map rows to meaning
+            rev_nodes = {idx:name for name, idx in self.node_indices.items()}
+            
+            for i in range(A.shape[0]):
+                if row_norms[i] < 1e-12:
+                    if i < n:
+                        label = f"Node {rev_nodes[i]}"
+                    elif i < n + m:
+                        k = i-n
+                        label = f"Voltage Source {self.v_source_list[k]}"
+                    self._local_print(f"Row {i}: {label}")
+                    
+            raise ValueError("A in Ax=b is rank deficient")
+    
+    def _create_Ab(self, dt):
+        
+        numel = self.num_nodes + self.num_v_sources
+        
+        A = np.zeros((numel, numel), dtype=float)
+        b = np.zeros((numel,), dtype=float)
+        
+        # Stamp A matrix for passive components
+        for _,_, data in self.graph.edges(data=True):
+            
+            c_obj = data['component']
+            
+            n1 = c_obj.component.node1
+            n2 = c_obj.component.node2
+            
+            # Passive components only
+            if c_obj.component.ctype in (ComponentType.RESISTOR, 
+                                         ComponentType.SWITCH):
+                c_obj.stamp(A=A,
+                            b=b,
+                            n1=self.node_indices[n1],
+                            n2=self.node_indices[n2],
+                            voltage_source_index=None,
+                            default_dt=None,
+                            discretization=None)
+            
+            # Active components (need to implement capacitors)
+            if c_obj.component.ctype in (ComponentType.CAPACITOR,
+                                         ComponentType.INDUCTOR):
+                # Use current component voltage as the dV_lpv
+                c_obj.stamp(A=A,
+                            b=b,
+                            n1=self.node_indices[n1],
+                            n2=self.node_indices[n2],
+                            dt=dt,
+                            voltage_source_index=None,
+                            default_dt=self.default_dt,
+                            discretization=self.discretization)
+                    
+        # Stamp A matrix for voltage sources
+        for k, (n1, n2, vs) in enumerate(self.v_source_list):
+            
+            # n1, n2 are directed nodes (self._voltage_list() populates via 
+            # assumed orientation)
+            
+            # Calculate voltage source index
+            vs_idx = self.num_nodes+k
+            
+            vs.stamp(A=A,
+                     b=b,
+                     n1=self.node_indices[n1],
+                     n2=self.node_indices[n2],
+                     voltage_source_index=vs_idx,
+                     default_dt=None,
+                     discretization=None)
+            
+        return A, b
+
+    def _get_branch_data_list(self):
+        
+        branch_data_list = []
+        for _,_, data in self.graph.edges(data=True):
+            
+            c = data["component"].component
+            
+            n1 = c.node1
+            n2 = c.node2
+            
+            branch_data_list.append(
+                BranchData(
+                    name=c.name,
+                    node1=n1,
+                    node2=n2,
+                    node1_voltage=self.node_voltages.get(n1, 0.0),
+                    node2_voltage=self.node_voltages.get(n2, 0.0),
+                    voltage_drop=c.voltage,
+                    current=getattr(c,'current',0.0),
+                    resistance=getattr(c,'resistance',None),
+                    ctype=c.ctype.value))
+            
+        return branch_data_list
+
+    def _get_node_data_list(self):
+        # get net currents
+        node_i = {node: 0.0 for node in self.graph.nodes}
+        
+        for _,_, data in self.graph.edges(data=True):
+            
+            c = data['component'].component
+            
+            n1 = c.node1
+            n2 = c.node2
+            
+            i = getattr(c, "current", 0.0)
+            node_i[n1] -= i
+            node_i[n2] += i
+            
+        node_data_list = []
+        for node in self.graph.nodes:
+            node_data_list.append(NodeData(name=node,
+                                           voltage=
+                                           self.node_voltages.get(node,0.0),
+                                           net_current=node_i[node],
+                                           pos=
+                                           self.graph.nodes[node].get("pos")))
+            
+        return node_data_list
+    
+    def _get_simulation_length(self, time: np.ndarray):
+        
+        if time is not None:
+            self.num_steps = max(1,len(time))
+        else:
+            self.num_steps = 1
+
+    def _guard_dt(self, dt):
+                
+        if dt is None:        
+            # Raise error if there are any capacitors
+            if any(d['component'].component.ctype == ComponentType.CAPACITOR 
+                   for _,_,d in self.graph.edges(data=True)):
+                raise ValueError("Unsupported: Capacitor(s) with single DT.")
+            
+            # Raise error if there are any capacitors
+            if any(d['component'].component.ctype == ComponentType.INDUCTOR 
+                   for _,_,d in self.graph.edges(data=True)):
+                raise ValueError("Unsupported: Inductor(s) with single DT.")
+        
+        elif dt < self.numerics.min_dt:
+            raise ValueError(f"DT must be greater than {self.numerics.min_dt}")
+    
+    def _guard_dt_min_vec(self, dt_vec):
+            
+        dt_check = dt_vec < self.numerics.min_dt
+        if any(dt_check):
+            raise ValueError(
+                f"DT must be larger than min DT: {self.numerics.min_dt}")
+    
+
+        
+    def _init_storage(self, time: np.ndarray):
+        
+        if self.num_steps > 1:
+            steps = self.num_steps - 1
+            local_time = time[1:]
+        else:
+            steps = 1
+            local_time = np.array([0],dtype=float)
+        
+        sim_data = SimulationData(time=local_time)
+        sim_data.node_names = list(self.node_list)
+        sim_data.branch_names = [c.component.name for _, _, c in 
+                                 self.branch_list]        
+        sim_data.node_v = np.zeros((steps, self.num_nodes), 
+                                   dtype=float)
+        sim_data.branch_v = np.zeros((steps, len(self.branch_list)), 
+                                     dtype=float)
+        sim_data.branch_i = np.zeros((steps, len(self.branch_list)), 
+                                     dtype=float)
+        
+        return sim_data
+    
+    def _local_print(self, input_str):
+        
+        if self.verbose:
+            print(input_str)
+            
+    def _prune_isolated_nodes(self):
+        
+        # get isolated nodes
+        iso_nodes = list(nx.isolates(self.graph))
+        
+        if iso_nodes:
+            self._local_print(f"\tWARNING - dropping isolated nodes: {iso_nodes}")
+            self.graph.remove_nodes_from(iso_nodes)
+    
     def _set_mode(self, mode):
         self.mode = mode
         for _, _, data in self.graph.edges(data=True):
@@ -63,168 +413,106 @@ class Network:
             else:
                 self.ground_node = nodes[0]
     
-    def _build_node_list(self):
-        
-        self._set_ground()
-        
-        # Clear node indices and lists
-        self.node_indices = {}
-        self.node_list = []
-        
-        # Set index
-        idx=0
-        
-        for node in self.graph.nodes:
-            self.node_indices[node] = idx
-            self.node_list.append(node)
-            idx += 1
-            
-        return len(self.node_indices)
-
-    def _prune_isolated_nodes(self):
-        
-        # get isolated nodes
-        iso_nodes = list(nx.isolates(self.graph))
-        
-        if iso_nodes:
-            print(f"\tWARNING - dropping isolated nodes: {iso_nodes}")
-            self.graph.remove_nodes_from(iso_nodes)
-    
-    def _check_matrix(self, A, v_source_list):
-        
-        # Get rank of matrix
-        rank = np.linalg.matrix_rank(A)
-        
-        if rank < A.shape[0]:
-            
-            # Node-voltage unknowns
-            n = len(self.node_indices)
-            
-            # Number of voltage sources
-            m = sum(1 for _,_,d in self.graph.edges(data=True)
-                    if (d['component'].component.ctype == 
-                        ComponentType.VOLTAGE_SOURCE))
-            
-            # row information
-            row_norms = np.linalg.norm(A, axis=1)
-            print("row norms:", [f"{i}:{row_norms[i]:.2e}" for i in 
-                                 range(A.shape[0])])
-            
-            # map rows to meaning
-            rev_nodes = {idx:name for name, idx in self.node_indices.items()}
-            
-            for i in range(A.shape[0]):
-                if row_norms[i] < 1e-12:
-                    if i < n:
-                        label = f"Node {rev_nodes[i]}"
-                    elif i < n + m:
-                        k = i-n
-                        label = f"Voltage Source {v_source_list[k]}"
-                    print(f"Row {i}: {label}")
-                    
-            raise ValueError("A in Ax=b is rank deficient")
-    
-    def _get_node_data_list(self):
-        # get net currents
-        node_i = {node: 0.0 for node in self.graph.nodes}
-        for n1, n2, data in self.graph.edges(data=True):
-            comp = data['component'].component
-            i = getattr(comp, "current", 0.0)
-            node_i[n1] -= i
-            node_i[n2] += i
-            
-        node_data_list = []
-        for node in self.graph.nodes:
-            node_data_list.append(NodeData(name=node,
-                                           voltage=
-                                           self.node_voltages.get(node,0.0),
-                                           net_current=node_i[node],
-                                           pos=
-                                           self.graph.nodes[node].get("pos")))
-            
-        return node_data_list
-    
-    def _get_branch_data_list(self):
-        
-        branch_data_list = []
-        for n1, n2, data in self.graph.edges(data=True):
-            c = data["component"].component
-            
-            branch_data_list.append(
-                BranchData(
-                    name=c.name,
-                    node1=n1,
-                    node2=n2,
-                    node1_voltage=self.node_voltages.get(n1, 0.0),
-                    node2_voltage=self.node_voltages.get(n2, 0.0),
-                    voltage_drop=c.voltage,
-                    current=getattr(c,'current',0.0),
-                    resistance=getattr(c,'resistance',None),
-                    ctype=c.ctype.value))
-            
-        return branch_data_list
-    
-    def solve(self, time=None):
-        
-        print('\nSolving circuit using Modified Nodal Analysis')
-        
-        # Update component state
-        for _, _, data in self.graph.edges(data=True):
-            # component=data['component']
-            if time is not None:
-                data['component'].update(time)
-            else:
-                data['component'].update()
+    def _store_data(self, x, dt):
                 
-        # Build node list
-        print('\n1: Pruning isolated nodes')
-        self._prune_isolated_nodes()
-        num_nodes = self._build_node_list()        
-        
-        # Treat voltage sources
-        v_source_list = []
-        for n1, n2, data in self.graph.edges(data=True):
-            c = data['component'].component
-            if c.ctype == ComponentType.VOLTAGE_SOURCE:
-                v_source_list.append((n1, n2, data['component']))
-        
-        num_v_sources = len(v_source_list)
-        
-        # Generate A, b matrices
-        print('2: Generating A matrix, b vector')
-        numel = num_nodes + num_v_sources
-        
-        A = np.zeros((numel, numel), dtype=float)
-        b = np.zeros((numel,), dtype=float)
-        
-        # Stamp A matrix for passive components
-        for n1, n2, data in self.graph.edges(data=True):
+        # Store node voltages
+        for node, idx in self.node_indices.items():
+            self.node_voltages[node] = x[idx]
             
-            c_obj = data['component']
-            
-            # Passive components only
-            if c_obj.component.ctype in (ComponentType.RESISTOR, 
-                                         ComponentType.SWITCH):
-                c_obj.stamp(A=A,
-                            b=b,
-                            n1=self.node_indices[n1],
-                            n2=self.node_indices[n2],
-                            voltage_source_index=None)
-                    
-        # Stamp A matrix for voltage sources
-        for k, (n1, n2, vs) in enumerate(v_source_list):
+        # Store voltage source currents 
+        for k, (n1, n2, vs) in enumerate(self.v_source_list):
             
             # Calculate voltage source index
-            vs_idx = num_nodes+k
+            vs_idx = self.num_nodes + k
             
-            vs.stamp(A=A,
-                     b=b,
-                     n1=self.node_indices[n1],
-                     n2=self.node_indices[n2],
-                     voltage_source_index=vs_idx)
+            # update current
+            vs.component.current = x[vs_idx]
+            
+        # Store voltage drops, currents for all components
+        for _, _, data in self.graph.edges(data=True):
+            
+            c_data = data['component'].component
+            
+            # Extract node specific orientation
+            n1 = c_data.node1
+            n2 = c_data.node2
+            
+            # Store voltage drop across component
+            voltage_new = self.node_voltages[n1] - self.node_voltages[n2]
+            
+            # Propagate currents
+            if c_data.ctype in (ComponentType.RESISTOR, ComponentType.SWITCH):
+                
+                c_data.voltage = voltage_new 
+                
+                if (c_data.resistance is not None and c_data.resistance != 0):
+                    c_data.current = c_data.voltage/c_data.resistance
+                else:
+                    # Short circuit when resistance = 0
+                    c_data.current = np.inf
+                    
+            elif c_data.ctype ==  ComponentType.CAPACITOR:
+                
+                if (self.discretization == DiscretizationType.BACKWARD_EULER or
+                    self.default_dt):
+                    # 
+                    c_data.current = ((c_data.capacitance/dt) * 
+                                     (voltage_new - 
+                                      c_data.discrete_data.lpv1_voltage))
+                elif self.discretization == DiscretizationType.BDF2:
+                    c_data.current = ((c_data.capacitance/(2*dt)) * 
+                                      (3*voltage_new - 
+                                       4*c_data.discrete_data.lpv1_voltage + 
+                                       c_data.discrete_data.lpv2_voltage))
+                    
+                # Store voltage drop
+                c_data.voltage = voltage_new
+                
+                self._store_lpv(c_data)
+                
+            elif c_data.ctype == ComponentType.INDUCTOR:
+                
+                # Calculate inductor final properties
+                if (self.discretization == DiscretizationType.BACKWARD_EULER or
+                    self.default_dt):
+                    # 
+                    c_data.current = ((dt/c_data.inductance)*voltage_new + 
+                                      c_data.discrete_data.lpv1_current)
+                elif self.discretization == DiscretizationType.BDF2:
+                    c_data.current = (((4.0*c_data.discrete_data.lpv1_current -
+                                        c_data.discrete_data.lpv2_current)/3.0)
+                                      + voltage_new*((2.0*dt)/
+                                                     (3.0*c_data.inductance)))                
+                # Store voltage drop
+                c_data.voltage = voltage_new
+                
+                self._store_lpv(c_data)
+                
+    def _store_lpv(self, comp):
+        
+        # Store voltage data
+        comp.discrete_data.lpv2_voltage = comp.discrete_data.lpv1_voltage
+        comp.discrete_data.lpv1_voltage = comp.voltage
+        
+        # Store current data
+        comp.discrete_data.lpv2_current = comp.discrete_data.lpv1_current
+        comp.discrete_data.lpv1_current = comp.current
+                
+    def _timestep(self, dt=None):
+        
+        self._guard_dt(dt)
+            
+        self._local_print('\nSolving circuit using Modified Nodal Analysis')
+        
+        # Update component state
+        self._update_comps()
 
+        # Generate A, b matrices
+        self._local_print('Generating A matrix, b vector')
+        A, b = self._create_Ab(dt)
+        
         # Set ground
-        print('3: Setting ground node')
+        self._local_print('Setting ground node')
         gnd_idx = self.node_indices[self.ground_node]
         
         A[gnd_idx, :] = 0.0
@@ -235,50 +523,39 @@ class Network:
 
 
         # Check for matrix issues
-        print('4: Checking A matrix for numerical stability issues')
-        self._check_matrix(A, v_source_list)
+        self._local_print('Checking A matrix for numerical stability issues')
+        self._check_matrix(A)
         
         # Solve Ax = b
-        print('5: Solving Ax=b')
+        self._local_print('Solving Ax=b')
         x = np.linalg.solve(A, b)
         
-        # Store node voltages
-        for node, idx in self.node_indices.items():
-            self.node_voltages[node] = x[idx]
-            
-        # Store voltage source currents 
-        for k, (n1, n2, vs) in enumerate(v_source_list):
-            
-            # Calculate voltage source index
-            vs_idx = num_nodes + k
-            
-            # update current
-            vs.component.current = x[vs_idx]
-            
-        # Store voltage drops, currents for all components
-        for n1, n2, data in self.graph.edges(data=True):
-            
-            c_data = data['component'].component
-            
-            # Store voltage drop across component
-            c_data.voltage = self.node_voltages[n1] - self.node_voltages[n2]
-            
-            # Propagate currents
-            if c_data.ctype in (ComponentType.RESISTOR, ComponentType.SWITCH):
-                
-                if (c_data.resistance is not None and c_data.resistance != 0):
-                    c_data.current = c_data.voltage/c_data.resistance
-                else:
-                    # Short circuit when resistance = 0
-                    c_data.current = np.inf
-                    
+        # Store solved data to objects in graph / network
+        self._local_print('Storing network data')
+        self._store_data(x, dt)
+        
         # Generate final node list
         if self.node_reporting:
             self.node_report = self._get_node_data_list()
-            print('\nReporting Node Data\n')
-            print(self.node_report)
+            self._local_print('\nReporting Node Data\n')
+            self._local_print(self.node_report)
 
         if self.branch_reporting:
             self.branch_report = self._get_branch_data_list()
-            print('\nReporting Branch Data\n')
-            print(self.branch_report)
+            self._local_print('\nReporting Branch Data\n')
+            self._local_print(self.branch_report)
+
+    def _update_comps(self):
+        
+        for _, _, data in self.graph.edges(data=True):
+                data['component'].update()
+        
+    def _write_step(self, sim_data: SimulationData, step: int):
+        # nodes
+        for j, node in enumerate(self.node_list):
+            sim_data.node_v[step, j] = float(self.node_voltages[node])
+            
+        for k, (_, _, c) in enumerate(self.branch_list):
+            sim_data.branch_v[step, k] = float(c.component.voltage)
+            sim_data.branch_i[step, k] = float(c.component.current)
+        

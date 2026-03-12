@@ -27,7 +27,7 @@ class Resistor(CircuitComponent):
         # Enforce type setting
         self.component.ctype = ComponentType.RESISTOR
         
-    def update(self, time=None):
+    def update(self):
         
         if self.component.mode == CalculationMode.VOLTAGE:
             self.voltage()
@@ -42,7 +42,8 @@ class Resistor(CircuitComponent):
             raise ValueError('Error: Specify calculation mode for Resistor '+
                              self.component.name)
     
-    def stamp(self, A, b, n1, n2, voltage_source_index=None, i_guess=None):
+    def stamp(self, A, b, n1, n2, voltage_source_index=None, default_dt=None,
+              discretization=None):
         # Used for matrix formulation in network class
         
         # Get component node indices

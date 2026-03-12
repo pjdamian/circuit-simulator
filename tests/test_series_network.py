@@ -25,6 +25,11 @@ from examples.series_network import build_series_network
 
 class TestSeriesNetworkPhysics(unittest.TestCase):
     def test_series_currents_and_voltages(self):
+        """
+        TEST 1: PASSES, SERIES RESISTORS, CHECKS CURRENTS AND VOLTAGES
+
+        """
+        
         # build, solve network
         series_net = build_series_network()
         series_net.solve()

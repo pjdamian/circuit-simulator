@@ -26,6 +26,9 @@ from enums.switch_condition import SwitchCondition
 class ResistorTests(unittest.TestCase):
     
     def make_test_data(self, **overrides):
+        """
+        Makes component data for resistor
+        """
         # Default data for tests
         default_data = dict(
             name='R1',
@@ -46,12 +49,21 @@ class ResistorTests(unittest.TestCase):
         return ComponentData(**default_data)
     
     def test_voltage_calculation(self):
+        """
+        TEST 1: CHECKS VOLTAGE CALCULATION, PASSES
+
+        """
         test_data = self.make_test_data()
         resistor = Resistor(test_data)
         resistor.update()
         self.assertEqual(resistor.component.voltage, 5.0)
         
     def test_current_calculation(self):
+        """
+        TEST 2: CHECKS CURRENT CALCULATION, PASSES
+
+        """
+        
         test_data = self.make_test_data(
             voltage=10.0,
             resistance=5.0,
@@ -61,6 +73,11 @@ class ResistorTests(unittest.TestCase):
         self.assertEqual(resistor.component.current, 2.0)
         
     def test_resistance_calculation(self):
+        """
+        TEST 3: CHECKS RESISTANCE CALCULATION, PASSES
+
+        """
+        
         test_data = self.make_test_data(
             voltage=12.0,
             current=4.0,
@@ -70,12 +87,20 @@ class ResistorTests(unittest.TestCase):
         self.assertEqual(resistor.component.resistance, 3.0)
         
     def test_invalid_mode(self):
+        """
+        TEST 4: CHECKS INVALID MODE CASE, CODE SHOULD ERROR, PASSES
+
+        """
         test_data = self.make_test_data(mode=None)
         resistor = Resistor(test_data)
         with self.assertRaises(ValueError):
             resistor.update()
             
     def test_invalid_resistance(self):
+        """
+        TEST 5: CHECKS INVALID RESISTANCE, CODE SHOULD ERROR, PASSES
+
+        """
         test_data = self.make_test_data(
             resistance=0.0,
             mode=CalculationMode.CURRENT)
@@ -84,6 +109,10 @@ class ResistorTests(unittest.TestCase):
             resistor.update()
             
     def test_invalid_current(self):
+        """
+        TEST 6: CHECKS INVALID CURRENT, CODE SHOULD ERROR, PASSES
+
+        """
         test_data = self.make_test_data(
             current=0.0,
             mode=CalculationMode.RESISTANCE)
@@ -92,6 +121,10 @@ class ResistorTests(unittest.TestCase):
             resistor.update()
             
     def test_resistance_negative_i(self):
+        """
+        TEST 7: CEHCKS NEGATIVE CURRENT, CODE SHOULD ERROR, PASSES
+
+        """
         test_data =self.make_test_data(
             voltage = 12.0,
             current = -4.0,

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Sep  5 22:19:53 2025
+Created on Mon Sep  8 19:12:43 2025
 
 @author: pmdam
 """
@@ -16,11 +16,6 @@ from enum import Enum
 # Define class
 # -----------------------------------------------------------------------------
 
-class ComponentType(Enum):
-    RESISTOR = 'resistor'
-    VOLTAGE_SOURCE = 'voltage_source'
-    CURRENT_SOURCE = 'current_source'
-    SWITCH = 'switch'
-    NODE = 'node'
-    CAPACITOR='capacitor'
-    INDUCTOR='inductor'
+class DiscretizationType(Enum):
+    BACKWARD_EULER = 'Backward Euler'
+    BDF2 = 'Backward Difference Formula 2'
