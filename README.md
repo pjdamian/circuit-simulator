@@ -11,7 +11,7 @@ It supports arbitrary network topologies using NetworkX and allows simulation of
 - Capacitors
 - Inductors
 
-The solver constructs and solves the MNA system matrix `A x = b`, then returns per-node voltages and per-component currents/voltages for inspection or debugging. Two discretization schemes are available and can be specified on network creation - Backward Euler and 2nd order backward differencing schemes are available. In many cases, it will be preferable to use the 2nd order scheme to allow larger timesteps for a given simulation.
+The solver constructs and solves the MNA system matrix `A x = b`, then returns per-node voltages and per-component currents/voltages for inspection or debugging. Two discretization schemes are available and can be specified on network creation - the Backward Euler and 2nd order backward differencing schemes. In many cases, it will be preferable to use the 2nd order scheme to allow larger timesteps for a given simulation.
 
 This project is designed to demonstrate engineering fundamentals in numerical methods, circuit simulation, object-oriented design, and structured testing. 
 
