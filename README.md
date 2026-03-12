@@ -22,10 +22,12 @@ This project is designed to demonstrate engineering fundamentals in numerical me
 - Full MNA stamping for:
   - Resistors (conductance form)  
   - Voltage sources (with additional current unknowns)  
-  - Switches (open/closed resistance modeling)  
+  - Switches (open/closed resistance modeling)
+  - Capacitors
+  - Inductors
 - Automatic node indexing and isolated-node removal  
 - Ground selection and matrix conditioning  
-- Node voltage reporting  
+- Node voltage reporting
 - Branch voltage & current reporting with clear sign conventions  
 - Physics-based validation tests (series, parallel, RC, RL, RLC circuits)
 
