@@ -21,10 +21,8 @@ This project is designed to demonstrate engineering fundamentals in numerical me
 - Two discretization schemes: Backward Euler and BDF2. BDF2 provides second-order accuracy allowing larger timesteps for equivalent precision
 - Physics-based validation tests (series, parallel, RC, RL, RLC circuits). All transient tests validate against closed form analytical solutions across all damping regimes.
 
----
-
 ## Example Usage  
-See the 'examples/' directory for complete RC, RL, and RLC transient simulations.
+See the `examples/` directory for complete RC, RL, and RLC transient simulations.
 
 ## Testing
 A helper test script was implemented, "run_all_tests.py". This script runs all available tests in the "tests" folder. These include implementation checks, and physics based verification checks. The physics for the example circuits are either trivially simple (series, parallel), or well known problems (RC, RL, and RLC). Analytical equations can be readily found on the web.
