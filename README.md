@@ -17,24 +17,47 @@ This project is designed to demonstrate engineering fundamentals in numerical me
 
 ---
 
-## Features  
-- Build networks via `add_node()` and `add_component()`  
-- Full MNA stamping for:
-  - Resistors (conductance form)  
-  - Voltage sources (with additional current unknowns)  
-  - Switches (open/closed resistance modeling)
-  - Capacitors
-  - Inductors
-- Automatic node indexing and isolated-node removal  
-- Ground selection and matrix conditioning  
-- Node voltage reporting
-- Branch voltage & current reporting with clear sign conventions  
-- Physics-based validation tests (series, parallel, RC, RL, RLC circuits)
+## Features
+- Two discretization schemes: Backward Euler and BDF2. BDF2 provides second-order accuracy allowing larger timesteps for equivalent precision
+- Physics-based validation tests (series, parallel, RC, RL, RLC circuits). All transient tests validate against closed form analytical solutions across all damping regimes.
 
 ---
 
 ## Example Usage  
-Please refer to any of the example networks in the "examples" directory. These scripts show how to build networks and solve them.
+See the 'examples/' directory for complete RC, RL, and RLC transient simulations.
 
-## Global Verification
+## Testing
 A helper test script was implemented, "run_all_tests.py". This script runs all available tests in the "tests" folder. These include implementation checks, and physics based verification checks. The physics for the example circuits are either trivially simple (series, parallel), or well known problems (RC, RL, and RLC). Analytical equations can be readily found on the web.
+
+---
+
+## Project structure
+```
+circuit-simulator/
+├── components/         # Circuit element classes (Resistor, Capacitor, etc.)
+├── config_classes/     # Numerical configuration (min timestep, etc.)
+├── data_classes/       # Data containers (ComponentData, NodeData, etc.)
+├── enums/              # Enumerations (ComponentType, DiscretizationType, etc.)
+├── examples/           # Pre-built example networks (RC, RL, RLC, series, parallel)
+├── networks/           # Core solver (Network, InputDriver)
+├── tests/              # Physics-based validation test suite
+└── run_all_tests.py    # Test runner
+```
+
+---
+
+## Installation
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Running the tests
+```bash
+PYTHONPATH=. python run_all_tests.py
+```
+
+Expected output: 47 tests, 0 failures.
+
+---
