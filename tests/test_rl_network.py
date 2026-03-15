@@ -321,54 +321,54 @@ class TestRLNetworkPhysics(unittest.TestCase):
                                                atol=abs_tol)
                     break
             
-        def test_rl_c_and_v_AC_loose_tol_BDF2(self):
-            """
-            TEST CASE 4: ANALYTICAL SOLUTION FOR AC RL CIRCUIT, BDF2 FORMULA
+    def test_rl_c_and_v_AC_loose_tol_BDF2(self):
+        """
+        TEST CASE 4: ANALYTICAL SOLUTION FOR AC RL CIRCUIT, BDF2 FORMULA
 
-            """
-            
-            # manually set properties
-            v0 = 12             # driving voltage
-            w = 60              # driving frequency
-            t_steps = 100000    # number of timestamps
-            rel_tol = 1e-4      # relative tolerance
-            abs_tol = 1e-4      # absolute tolerance
-            
-            # build network, report properties
-            rl_net, r_eq, rl_l = build_rl_network(discretization=
-                                                  DiscretizationType.BDF2)
-            tau = rl_l/r_eq
-            
-            # Generate network inputs
-            time = self.make_time_vector(tau, t_steps)
-            test_time = time[1:]
-            input_driver, physics = self.make_input_driver_sin(v0,
-                                                               tau, 
-                                                               r_eq, 
-                                                               w, 
-                                                               rl_l)
+        """
+        
+        # manually set properties
+        v0 = 12             # driving voltage
+        w = 60              # driving frequency
+        t_steps = 100000    # number of timestamps
+        rel_tol = 1e-4      # relative tolerance
+        abs_tol = 1e-4      # absolute tolerance
+        
+        # build network, report properties
+        rl_net, r_eq, rl_l = build_rl_network(discretization=
+                                              DiscretizationType.BDF2)
+        tau = rl_l/r_eq
+        
+        # Generate network inputs
+        time = self.make_time_vector(tau, t_steps)
+        test_time = time[1:]
+        input_driver, physics = self.make_input_driver_sin(v0,
+                                                           tau, 
+                                                           r_eq, 
+                                                           w, 
+                                                           rl_l)
 
-            # build, solve network
-            rl_net.solve(time=time, input_driver=input_driver)
-            
-            # current check should fail - tolerances too tight
-            for i in range(np.shape(rl_net.sim_data.branch_i)[1]):
-                np.testing.assert_allclose(rl_net.sim_data.branch_i[:,i],
-                                            physics['I_l'](test_time),
-                                            rtol=rel_tol,
-                                            atol=abs_tol)        
-            
-            # voltage check should fail - tolerances too tight
-            for k, (_, _,c) in enumerate(rl_net.branch_list):
-                # there's only one capacitor in the network
-                if c.component.ctype is ComponentType.INDUCTOR:
-                    # Making sure this executed
-                    # print('Voltage Checked!')
-                    np.testing.assert_allclose(rl_net.sim_data.branch_v[:,k],
-                                               physics['V_l'](test_time),
-                                               rtol=rel_tol,
-                                               atol=abs_tol)
-                    break
+        # build, solve network
+        rl_net.solve(time=time, input_driver=input_driver)
+        
+        # current check should fail - tolerances too tight
+        for i in range(np.shape(rl_net.sim_data.branch_i)[1]):
+            np.testing.assert_allclose(rl_net.sim_data.branch_i[:,i],
+                                        physics['I_l'](test_time),
+                                        rtol=rel_tol,
+                                        atol=abs_tol)        
+        
+        # voltage check should fail - tolerances too tight
+        for k, (_, _,c) in enumerate(rl_net.branch_list):
+            # there's only one capacitor in the network
+            if c.component.ctype is ComponentType.INDUCTOR:
+                # Making sure this executed
+                # print('Voltage Checked!')
+                np.testing.assert_allclose(rl_net.sim_data.branch_v[:,k],
+                                           physics['V_l'](test_time),
+                                           rtol=rel_tol,
+                                           atol=abs_tol)
+                break
                 
 
 # -----------------------------------------------------------------------------
