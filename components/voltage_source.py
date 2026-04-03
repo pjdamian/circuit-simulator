@@ -13,6 +13,7 @@ Created on Fri Sep  5 21:39:46 2025
 from components.circuit_component import CircuitComponent
 from enums.component_type import ComponentType
 from enums.calculation_mode import CalculationMode
+from data_classes.stamp_context import StampContext
 
 # -----------------------------------------------------------------------------
 # Define class
@@ -26,6 +27,7 @@ class VoltageSource(CircuitComponent):
         
         # Enforce type setting
         self.component.ctype = ComponentType.VOLTAGE_SOURCE
+        self.source = True
         
     def update(self):
         
@@ -42,8 +44,7 @@ class VoltageSource(CircuitComponent):
             raise ValueError('Error: Specify calculation mode for Voltage '+
                              self.component.name)
     
-    def stamp(self, A, b, n1, n2, voltage_source_index=None, default_dt=None,
-              discretization=None):
+    def stamp(self, A, b, n1, n2, ctx: StampContext):
         # Used for matrix formulation in network class
         
         # Check for ideal parameters        
@@ -54,19 +55,23 @@ class VoltageSource(CircuitComponent):
             raise ValueError('Error: Specify voltage source ideal parameters')
         
         # Update A matrix with voltage source component
-        A[n1, voltage_source_index] += 1.0
-        A[voltage_source_index, n1] += 1.0
-        A[n2, voltage_source_index] -= 1.0
-        A[voltage_source_index, n2] -= 1.0
+        A[n1, ctx.voltage_source_index] += 1.0
+        A[ctx.voltage_source_index, n1] += 1.0
+        A[n2, ctx.voltage_source_index] -= 1.0
+        A[ctx.voltage_source_index, n2] -= 1.0
         
 
         if r_int > 0:
-            A[voltage_source_index,voltage_source_index] -= r_int
+            A[ctx.voltage_source_index,ctx.voltage_source_index] -= r_int
                     
         # Update voltage in b
         # negative voltage -> voltage sources introduce a rise between 
         # inlet node n1, and outlet node n2. 
-        b[voltage_source_index] -= v_rise
+        b[ctx.voltage_source_index] -= v_rise
+    
+    def post_solve(self, current_new: float, ctx: StampContext):
+        
+        self.component.current = current_new
     
     def voltage(self):
         # Calculate voltage across source

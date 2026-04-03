@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Sep  5 22:10:52 2025
+Created on Tue Mar 17 08:30:24 2026
 
 @author: pmdam
 """
@@ -9,15 +9,20 @@ Created on Fri Sep  5 22:10:52 2025
 # Import statements
 # -----------------------------------------------------------------------------
 
-# Built in classes
+# Built in modules
 from dataclasses import dataclass
+from typing import Optional
+
+# Custom modules
+from enums.discretization_type import DiscretizationType
 
 # -----------------------------------------------------------------------------
 # Define class
 # -----------------------------------------------------------------------------
 
 @dataclass
-class MathChecks:
-    min_dt: float = 1e-6
-    max_conductance: float = 1e9
-    sparse_threshold: int = 200
+class StampContext:
+    dt: Optional[float] = None
+    default_dt: bool = True
+    discretization: DiscretizationType = DiscretizationType.BACKWARD_EULER
+    voltage_source_index: Optional[int] = None

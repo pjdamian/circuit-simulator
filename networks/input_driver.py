@@ -23,10 +23,10 @@ bfx = Callable[[float], bool]
 
 class InputDriver:
     
-    def __init__(self, sources={}, states={}):
+    def __init__(self, sources=None, states=None):
                 
-        self.sources: Dict[str, Union[tfx, np.ndarray]] = sources
-        self.states: Dict[str, Union[bfx, np.ndarray]] = states
+        self.sources: Dict[str, Union[tfx, np.ndarray]] = sources or {}
+        self.states: Dict[str, Union[bfx, np.ndarray]] = states or {}
                 
     def apply(self, net, t: float, k: Optional[int] = None):
         

@@ -13,6 +13,7 @@ Created on Fri Sep  5 21:39:46 2025
 from components.circuit_component import CircuitComponent
 from enums.component_type import ComponentType
 from enums.discretization_type import DiscretizationType
+from data_classes.stamp_context import StampContext
 
 # -----------------------------------------------------------------------------
 # Define class
@@ -32,24 +33,9 @@ class Capacitor(CircuitComponent):
         update method for capacitor meant to preserve usage in network class
         """
         
-        # if self.component.mode == CalculationMode.VOLTAGE:
-        #     self.voltage()
-            
-        # elif self.component.mode == CalculationMode.CURRENT:
-        #     self.current()
-        
-        # elif self.component.mode == CalculationMode.RESISTANCE:
-        #     self.resistance()
-        
-        # else:    
-        #     raise ValueError('Error: Specify calculation mode for Capacitor '+
-        #                      self.component.name)
-    
         pass
         
-    def stamp(self, A, b, n1, n2, dt, voltage_source_index=None, 
-              default_dt=True, 
-              discretization=DiscretizationType.BACKWARD_EULER):
+    def stamp(self, A, b, n1, n2, ctx: StampContext):
         """
         Objective: Update A matrix and b vector to solve the network problem
 
@@ -63,14 +49,9 @@ class Capacitor(CircuitComponent):
             Index for for the first node associated with this component.
         n2 : Integer, Scalar
             Index for for the second node associated with this component.
-        dt : Float, Scalar
-            Timestep required to c.
-        dV_lpv : Float, Scalar
-            Drop in voltage across the capacitor.
-        voltage_source_index : Integer, Scalar, optional
-            Index used for voltage source components. The default is None.
-        i_guess : Float, Scalar, optional
-            Guessed current for the given component. The default is None.
+        ctx : StampContext, custom data class
+            Additional calculation information for capacitors, inductors, 
+            voltage sources, etc.
 
         Raises
         ------
@@ -86,24 +67,20 @@ class Capacitor(CircuitComponent):
 
         # Used for matrix formulation in network class
         
-        # Get component node indices
-        # n1 = node_map[self.component.node1]
-        # n2 = node_map[self.component.node2]
-        
-        if dt is None:
+        if ctx.dt is None:
             raise ValueError("Invalid dt for Capacitor calculation")
         
         if (self.component.capacitance is not None and
             self.component.capacitance > 0):
 
             # Calculate stamping quantities
-            if ((discretization == DiscretizationType.BACKWARD_EULER) or 
-                default_dt):
-                G = self.component.capacitance / dt
+            if ((ctx.discretization == DiscretizationType.BACKWARD_EULER) or 
+                ctx.default_dt):
+                G = self.component.capacitance / ctx.dt
                 Ieq = G*self.component.discrete_data.lpv1_voltage
             else:
-                if discretization == DiscretizationType.BDF2:
-                    tmp_qty = self.component.capacitance / (2*dt)
+                if ctx.discretization == DiscretizationType.BDF2:
+                    tmp_qty = self.component.capacitance / (2*ctx.dt)
                     
                     G = 3*tmp_qty
                     Ieq = (4*self.component.discrete_data.lpv1_voltage - 
@@ -124,30 +101,35 @@ class Capacitor(CircuitComponent):
         else:
             raise ValueError("Capacitor has None or Negative capacitance")
     
+    def post_solve(self, voltage_new: float, ctx: StampContext):
+        
+        self.component.voltage = voltage_new
+        
+        if ((ctx.discretization == DiscretizationType.BACKWARD_EULER) or 
+            ctx.default_dt):
+            
+            lpv1_voltage = self.component.discrete_data.lpv1_voltage
+            
+            self.component.current = ((self.component.capacitance / 
+                                       ctx.dt) * (voltage_new - lpv1_voltage))
+        
+        elif ctx.discretization == DiscretizationType.BDF2:
+
+            lpv1_voltage = self.component.discrete_data.lpv1_voltage
+            lpv2_voltage = self.component.discrete_data.lpv2_voltage
+            
+            self.component.current = ((self.component.capacitance / 
+                                       (2*ctx.dt)) * (3*voltage_new - 
+                                                      4*lpv1_voltage + 
+                                                      lpv2_voltage))
+        # Store lpvs
+        self._store_lpv()
+                                                      
     def voltage(self):
         raise ValueError("Capacitor has no voltage method")
-
-        # self.component.voltage = (self.component.current * 
-        #                           self.component.resistance)
         
     def current(self):
         raise ValueError("Capacitor has no current method")
-        # if self.component.resistance <= 0:
-        #     raise ValueError(
-        #         f'Error: Resistor {self.component.name} has invalid '
-        #         f'resistance: {self.component.resistance}'
-        #         )
-        
-        # self.component.current = (self.component.voltage / 
-        #                           self.component.resistance)
         
     def resistance(self):
         raise ValueError("Capacitor has no resistance method")
-        # if self.component.current == 0:
-        #     raise ValueError(
-        #         f'Error: Resistor {self.component.name} has invalid '
-        #         f'current: {self.component.current}'
-        #         )
-            
-        # self.component.resistance = (self.component.voltage/
-        #                              abs(self.component.current))

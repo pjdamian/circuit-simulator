@@ -12,6 +12,8 @@ Created on Sat Sep 27 21:11:15 2025
 # Built-in
 import networkx as nx
 import numpy as np
+from scipy.sparse import lil_matrix, issparse
+from scipy.sparse.linalg import spsolve
 
 # Custom modules
 from enums.component_type import ComponentType
@@ -21,6 +23,7 @@ from data_classes.branch_data import BranchData
 from data_classes.simulation_data import SimulationData
 from config_classes.numeric_checks import MathChecks
 from networks.input_driver import InputDriver
+from data_classes.stamp_context import StampContext
 
 # -----------------------------------------------------------------------------
 # Define class
@@ -187,44 +190,63 @@ class Network:
 
     def _check_matrix(self, A):
         
-        # Get rank of matrix
-        rank = np.linalg.matrix_rank(A)
+        if self.verbose:
+            self._local_print('Checking A matrix for numerical stability')
         
-        if rank < A.shape[0]:
+            # Get rank of matrix
             
-            # Node-voltage unknowns
-            n = len(self.node_indices)
+            # Check for sparse matrices
+            if hasattr(A, 'toarray'):
+                A = A.toarray()
+                
+            rank = np.linalg.matrix_rank(A)
             
-            # Number of voltage sources
-            m = sum(1 for _,_,d in self.graph.edges(data=True)
-                    if (d['component'].component.ctype == 
-                        ComponentType.VOLTAGE_SOURCE))
-            
-            # row information
-            row_norms = np.linalg.norm(A, axis=1)
-            self._local_print("row norms:", [f"{i}:{row_norms[i]:.2e}" for i in 
-                                 range(A.shape[0])])
-            
-            # map rows to meaning
-            rev_nodes = {idx:name for name, idx in self.node_indices.items()}
-            
-            for i in range(A.shape[0]):
-                if row_norms[i] < 1e-12:
-                    if i < n:
-                        label = f"Node {rev_nodes[i]}"
-                    elif i < n + m:
-                        k = i-n
-                        label = f"Voltage Source {self.v_source_list[k]}"
-                    self._local_print(f"Row {i}: {label}")
-                    
-            raise ValueError("A in Ax=b is rank deficient")
+            if rank < A.shape[0]:
+                
+                # Node-voltage unknowns
+                n = len(self.node_indices)
+                
+                # Number of voltage sources
+                m = sum(1 for _,_,d in self.graph.edges(data=True)
+                        if (d['component'].component.ctype == 
+                            ComponentType.VOLTAGE_SOURCE))
+                
+                # row information
+                row_norms = np.linalg.norm(A, axis=1)
+                self._local_print("row norms:", [f"{i}:{row_norms[i]:.2e}" for 
+                                                 i in range(A.shape[0])])
+                
+                # map rows to meaning
+                rev_nodes = {idx:name for name, idx in 
+                             self.node_indices.items()}
+                
+                for i in range(A.shape[0]):
+                    if row_norms[i] < 1e-12:
+                        if i < n:
+                            label = f"Node {rev_nodes[i]}"
+                        elif i < n + m:
+                            k = i-n
+                            label = f"Voltage Source {self.v_source_list[k]}"
+                        self._local_print(f"Row {i}: {label}")
+                        
+                raise ValueError("A in Ax=b is rank deficient")
     
     def _create_Ab(self, dt):
         
         numel = self.num_nodes + self.num_v_sources
         
-        A = np.zeros((numel, numel), dtype=float)
+        # Switching to sparse matrix solve
+        if numel < self.numerics.sparse_threshold:
+            A = np.zeros((numel, numel), dtype=float)
+        else:
+            A = lil_matrix((numel, numel))
+        
         b = np.zeros((numel,), dtype=float)
+        
+        ctx = StampContext(
+            dt=dt,
+            default_dt= self.default_dt,
+            discretization= self.discretization)
         
         # Stamp A matrix for passive components
         for _,_, data in self.graph.edges(data=True):
@@ -234,30 +256,13 @@ class Network:
             n1 = c_obj.component.node1
             n2 = c_obj.component.node2
             
-            # Passive components only
-            if c_obj.component.ctype in (ComponentType.RESISTOR, 
-                                         ComponentType.SWITCH):
-                c_obj.stamp(A=A,
-                            b=b,
-                            n1=self.node_indices[n1],
-                            n2=self.node_indices[n2],
-                            voltage_source_index=None,
-                            default_dt=None,
-                            discretization=None)
-            
-            # Active components (need to implement capacitors)
-            if c_obj.component.ctype in (ComponentType.CAPACITOR,
-                                         ComponentType.INDUCTOR):
-                # Use current component voltage as the dV_lpv
-                c_obj.stamp(A=A,
-                            b=b,
-                            n1=self.node_indices[n1],
-                            n2=self.node_indices[n2],
-                            dt=dt,
-                            voltage_source_index=None,
-                            default_dt=self.default_dt,
-                            discretization=self.discretization)
-                    
+            if c_obj.component.ctype != ComponentType.VOLTAGE_SOURCE:
+                c_obj.stamp(A, 
+                            b, 
+                            self.node_indices[n1], 
+                            self.node_indices[n2], 
+                            ctx)
+        
         # Stamp A matrix for voltage sources
         for k, (n1, n2, vs) in enumerate(self.v_source_list):
             
@@ -265,15 +270,9 @@ class Network:
             # assumed orientation)
             
             # Calculate voltage source index
-            vs_idx = self.num_nodes+k
+            vs_ctx = StampContext(voltage_source_index=self.num_nodes+k)
             
-            vs.stamp(A=A,
-                     b=b,
-                     n1=self.node_indices[n1],
-                     n2=self.node_indices[n2],
-                     voltage_source_index=vs_idx,
-                     default_dt=None,
-                     discretization=None)
+            vs.stamp(A, b,self.node_indices[n1], self.node_indices[n2], vs_ctx)
             
         return A, b
 
@@ -381,10 +380,10 @@ class Network:
         
         return sim_data
     
-    def _local_print(self, input_str):
+    def _local_print(self, *args):
         
         if self.verbose:
-            print(input_str)
+            print(*args)
             
     def _prune_isolated_nodes(self):
         
@@ -413,90 +412,53 @@ class Network:
             else:
                 self.ground_node = nodes[0]
     
+    def _solve(self, A, b):
+        
+        if issparse(A):
+            A = A.tocsr()
+            x = spsolve(A, b)
+        else:
+            x = np.linalg.solve(A, b)
+        
+        return x
+    
     def _store_data(self, x, dt):
-                
+        
         # Store node voltages
         for node, idx in self.node_indices.items():
             self.node_voltages[node] = x[idx]
-            
+        
+        # Stamp Context
+        ctx = StampContext(dt=dt, 
+                           default_dt=self.default_dt,
+                           discretization=self.discretization)
+        
         # Store voltage source currents 
-        for k, (n1, n2, vs) in enumerate(self.v_source_list):
+        for k, (_, _, vs) in enumerate(self.v_source_list):
             
             # Calculate voltage source index
             vs_idx = self.num_nodes + k
             
-            # update current
-            vs.component.current = x[vs_idx]
+            # Update voltage source current
+            vs.post_solve(x[vs_idx], ctx)
             
         # Store voltage drops, currents for all components
         for _, _, data in self.graph.edges(data=True):
             
-            c_data = data['component'].component
+            c_obj = data['component']
             
-            # Extract node specific orientation
-            n1 = c_data.node1
-            n2 = c_data.node2
-            
-            # Store voltage drop across component
-            voltage_new = self.node_voltages[n1] - self.node_voltages[n2]
-            
-            # Propagate currents
-            if c_data.ctype in (ComponentType.RESISTOR, ComponentType.SWITCH):
+            # skip voltage sources
+            if c_obj.source:
+                pass
+            else:
+                # Extract node specific orientation
+                n1 = c_obj.component.node1
+                n2 = c_obj.component.node2
                 
-                c_data.voltage = voltage_new 
+                # Store voltage drop across component
+                voltage_new = self.node_voltages[n1] - self.node_voltages[n2]
                 
-                if (c_data.resistance is not None and c_data.resistance != 0):
-                    c_data.current = c_data.voltage/c_data.resistance
-                else:
-                    # Short circuit when resistance = 0
-                    c_data.current = np.inf
-                    
-            elif c_data.ctype ==  ComponentType.CAPACITOR:
-                
-                if (self.discretization == DiscretizationType.BACKWARD_EULER or
-                    self.default_dt):
-                    # 
-                    c_data.current = ((c_data.capacitance/dt) * 
-                                     (voltage_new - 
-                                      c_data.discrete_data.lpv1_voltage))
-                elif self.discretization == DiscretizationType.BDF2:
-                    c_data.current = ((c_data.capacitance/(2*dt)) * 
-                                      (3*voltage_new - 
-                                       4*c_data.discrete_data.lpv1_voltage + 
-                                       c_data.discrete_data.lpv2_voltage))
-                    
-                # Store voltage drop
-                c_data.voltage = voltage_new
-                
-                self._store_lpv(c_data)
-                
-            elif c_data.ctype == ComponentType.INDUCTOR:
-                
-                # Calculate inductor final properties
-                if (self.discretization == DiscretizationType.BACKWARD_EULER or
-                    self.default_dt):
-                    # 
-                    c_data.current = ((dt/c_data.inductance)*voltage_new + 
-                                      c_data.discrete_data.lpv1_current)
-                elif self.discretization == DiscretizationType.BDF2:
-                    c_data.current = (((4.0*c_data.discrete_data.lpv1_current -
-                                        c_data.discrete_data.lpv2_current)/3.0)
-                                      + voltage_new*((2.0*dt)/
-                                                     (3.0*c_data.inductance)))                
-                # Store voltage drop
-                c_data.voltage = voltage_new
-                
-                self._store_lpv(c_data)
-                
-    def _store_lpv(self, comp):
-        
-        # Store voltage data
-        comp.discrete_data.lpv2_voltage = comp.discrete_data.lpv1_voltage
-        comp.discrete_data.lpv1_voltage = comp.voltage
-        
-        # Store current data
-        comp.discrete_data.lpv2_current = comp.discrete_data.lpv1_current
-        comp.discrete_data.lpv1_current = comp.current
+                c_obj.post_solve(voltage_new, ctx)
                 
     def _timestep(self, dt=None):
         
@@ -523,12 +485,11 @@ class Network:
 
 
         # Check for matrix issues
-        self._local_print('Checking A matrix for numerical stability issues')
         self._check_matrix(A)
         
         # Solve Ax = b
         self._local_print('Solving Ax=b')
-        x = np.linalg.solve(A, b)
+        x = self._solve(A, b)
         
         # Store solved data to objects in graph / network
         self._local_print('Storing network data')

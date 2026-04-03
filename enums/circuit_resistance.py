@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Sep  5 22:10:52 2025
+Created on Tue Mar 17 08:06:28 2026
 
 @author: pmdam
 """
@@ -9,15 +9,13 @@ Created on Fri Sep  5 22:10:52 2025
 # Import statements
 # -----------------------------------------------------------------------------
 
-# Built in classes
-from dataclasses import dataclass
+# Built in
+from enum import Enum
 
 # -----------------------------------------------------------------------------
 # Define class
 # -----------------------------------------------------------------------------
 
-@dataclass
-class MathChecks:
-    min_dt: float = 1e-6
-    max_conductance: float = 1e9
-    sparse_threshold: int = 200
+class CircuitResistance(Enum):
+    OPEN = 1e10
+    CLOSED = 1e-10
